@@ -21,18 +21,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function handleFileSelect(e) {
     const file = e.target.files[0];
-    file && file.type.startsWith('image/') 
-        ? loadImage(file) 
-        : toast('Please select a valid image file', 'error');
+    file?.type.startsWith('image/') ? loadImage(file) : toast('not an image', 'error');
 }
 
 function handleDrop(e) {
     e.preventDefault();
     e.target.classList.remove('dragover');
     const file = e.dataTransfer.files[0];
-    file && file.type.startsWith('image/')
-        ? loadImage(file)
-        : toast('Please drop a valid image file', 'error');
+    file?.type.startsWith('image/') ? loadImage(file) : toast('not an image', 'error');
 }
 
 async function handlePaste() {
@@ -40,14 +36,11 @@ async function handlePaste() {
         const items = await navigator.clipboard.read();
         for (const item of items) {
             const imgType = item.types.find(t => t.startsWith('image/'));
-            if (imgType) {
-                loadImage(await item.getType(imgType));
-                return;
-            }
+            if (imgType) return loadImage(await item.getType(imgType));
         }
-        toast('No image in clipboard', 'error');
+        toast('no image in clipboard', 'error');
     } catch {
-        toast('Clipboard access failed - try uploading instead', 'error');
+        toast('clipboard blocked - just upload', 'error');
     }
 }
 
@@ -80,10 +73,10 @@ function resetAll() {
 }
 
 async function analyzeImage() {
-    if (!currentImage) return toast('Upload an image first', 'error');
+    if (!currentImage) return toast('no image uploaded', 'error');
     if (!apiKey) {
         $('apiKeySection').classList.remove('hidden');
-        return toast('Need API key', 'error');
+        return toast('need api key', 'error');
     }
 
     $('analyzeBtn').disabled = true;
@@ -102,10 +95,7 @@ async function analyzeImage() {
                 messages: [{
                     role: 'user',
                     content: [
-                        {
-                            type: 'text',
-                            text: 'Extract event details from this image. Return JSON with: title, date (YYYY-MM-DD), time (HH:MM), endDate, endTime, location, description. Just the JSON, nothing else.'
-                        },
+                        { type: 'text', text: 'extract event info from this image. return json: {title, date (YYYY-MM-DD), time (HH:MM), endDate, endTime, location, description}. just json, no markdown.' },
                         { type: 'image_url', image_url: { url: currentImage } }
                     ]
                 }],
@@ -113,33 +103,31 @@ async function analyzeImage() {
             })
         });
 
-        if (!res.ok) throw new Error((await res.json()).error?.message || 'API error');
+        if (!res.ok) throw new Error((await res.json()).error?.message || 'api error');
 
-        const data = await res.json();
-        let content = data.choices[0].message.content;
-        
+        let content = (await res.json()).choices[0].message.content;
         const jsonMatch = content.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
         if (jsonMatch) content = jsonMatch[1];
         
-        const event = JSON.parse(content);
+        const e = JSON.parse(content);
         
-        $('eventTitle').value = event.title || '';
-        $('eventDate').value = event.date || '';
-        $('eventTime').value = event.time || '';
-        $('eventEndDate').value = event.endDate || event.date || '';
-        $('eventEndTime').value = event.endTime || '';
-        $('eventLocation').value = event.location || '';
-        $('eventDescription').value = event.description || '';
+        $('eventTitle').value = e.title || '';
+        $('eventDate').value = e.date || '';
+        $('eventTime').value = e.time || '';
+        $('eventEndDate').value = e.endDate || e.date || '';
+        $('eventEndTime').value = e.endTime || '';
+        $('eventLocation').value = e.location || '';
+        $('eventDescription').value = e.description || '';
         
         $('loadingSection').classList.add('hidden');
         $('resultSection').classList.remove('hidden');
-        toast('Extracted event details', 'success');
+        toast('got the details');
     } catch (err) {
         console.error(err);
         $('loadingSection').classList.add('hidden');
         $('actionSection').classList.remove('hidden');
         $('analyzeBtn').disabled = false;
-        toast(`Error: ${err.message}`, 'error');
+        toast(err.message, 'error');
     }
 }
 
@@ -156,11 +144,9 @@ function handleFormSubmit(e) {
     });
 }
 
-function generateICS(event) {
-    const start = new Date(`${event.date}T${event.time}`);
-    const end = event.endTime 
-        ? new Date(`${event.endDate}T${event.endTime}`)
-        : new Date(start.getTime() + 3600000);
+function generateICS(ev) {
+    const start = new Date(`${ev.date}T${ev.time}`);
+    const end = ev.endTime ? new Date(`${ev.endDate}T${ev.endTime}`) : new Date(start.getTime() + 3600000);
     
     const fmt = d => d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
     const esc = s => s.replace(/\\/g, '\\\\').replace(/,/g, '\\,').replace(/;/g, '\\;').replace(/\n/g, '\\n');
@@ -168,44 +154,37 @@ function generateICS(event) {
     const ics = [
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
-        'PRODID:-//SmartCapture//Event Calendar//EN',
-        'CALSCALE:GREGORIAN',
-        'METHOD:PUBLISH',
+        'PRODID:-//SmartCapture//EN',
         'BEGIN:VEVENT',
         `UID:${Date.now()}@smartcapture.app`,
         `DTSTAMP:${fmt(new Date())}`,
         `DTSTART:${fmt(start)}`,
         `DTEND:${fmt(end)}`,
-        `SUMMARY:${esc(event.title)}`,
-        event.location && `LOCATION:${esc(event.location)}`,
-        event.description && `DESCRIPTION:${esc(event.description)}`,
-        'STATUS:CONFIRMED',
-        'SEQUENCE:0',
+        `SUMMARY:${esc(ev.title)}`,
+        ev.location && `LOCATION:${esc(ev.location)}`,
+        ev.description && `DESCRIPTION:${esc(ev.description)}`,
         'END:VEVENT',
         'END:VCALENDAR'
     ].filter(Boolean).join('\r\n');
     
-    const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
+    const blob = new Blob([ics], { type: 'text/calendar' });
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `${event.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.ics`;
-    document.body.appendChild(a);
+    a.href = URL.createObjectURL(blob);
+    a.download = `${ev.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.ics`;
     a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(a.href);
     
-    toast('Downloaded! Import it to your calendar', 'success');
+    toast('downloaded');
 }
 
 function saveApiKey() {
     const key = $('apiKeyInput').value.trim();
-    if (!key) return toast('Enter a valid API key', 'error');
+    if (!key) return toast('need a key', 'error');
     
     apiKey = key;
     localStorage.setItem('openai_api_key', key);
     $('apiKeySection').classList.add('hidden');
-    toast('API key saved', 'success');
+    toast('saved');
 }
 
 function toast(msg, type = 'success') {
