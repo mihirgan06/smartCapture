@@ -1,6 +1,5 @@
 // State management
 let currentImage = null;
-let apiKey = localStorage.getItem('openai_api_key') || '';
 
 // DOM elements
 const uploadArea = document.getElementById('uploadArea');
@@ -16,15 +15,9 @@ const loadingSection = document.getElementById('loadingSection');
 const resultSection = document.getElementById('resultSection');
 const eventForm = document.getElementById('eventForm');
 const resetBtn = document.getElementById('resetBtn');
-const apiKeySection = document.getElementById('apiKeySection');
-const apiKeyInput = document.getElementById('apiKeyInput');
-const saveApiKeyBtn = document.getElementById('saveApiKeyBtn');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-    if (!apiKey) {
-        apiKeySection.classList.remove('hidden');
-    }
     setupEventListeners();
 });
 
@@ -52,9 +45,6 @@ function setupEventListeners() {
     
     // Reset
     resetBtn.addEventListener('click', resetAll);
-    
-    // API key
-    saveApiKeyBtn.addEventListener('click', saveApiKey);
 }
 
 function handleFileSelect(event) {
@@ -138,71 +128,31 @@ async function analyzeImage() {
         return;
     }
 
-    if (!apiKey) {
-        apiKeySection.classList.remove('hidden');
-        showToast('Please enter your OpenAI API key', 'error');
-        return;
-    }
-
     analyzeBtn.disabled = true;
     actionSection.classList.add('hidden');
     loadingSection.classList.remove('hidden');
 
     try {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                model: 'gpt-4o',
-                messages: [
-                    {
-                        role: 'user',
-                        content: [
-                            {
-                                type: 'text',
-                                text: `Analyze this image and extract event details. Return a JSON object with the following fields:
-- title: Event title/name
-- date: Event date in YYYY-MM-DD format
-- time: Start time in HH:MM format (24-hour)
-- endDate: End date in YYYY-MM-DD format (if available, otherwise same as date)
-- endTime: End time in HH:MM format (if available)
-- location: Event location/venue
-- description: Brief description of the event
-
-If any information is not clearly visible, use reasonable defaults or leave empty. Only return the JSON object, no other text.`
-                            },
-                            {
-                                type: 'image_url',
-                                image_url: {
-                                    url: currentImage
-                                }
-                            }
-                        ]
+        // Use Tesseract.js to extract text from image
+        const { data: { text } } = await Tesseract.recognize(
+            currentImage,
+            'eng',
+            {
+                logger: info => {
+                    // Update loading message with progress
+                    if (info.status === 'recognizing text') {
+                        const progress = Math.round(info.progress * 100);
+                        document.querySelector('.loading-section p').textContent = 
+                            `Analyzing image... ${progress}%`;
                     }
-                ],
-                max_tokens: 500
-            })
-        });
+                }
+            }
+        );
 
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error?.message || 'Failed to analyze image');
-        }
+        console.log('Extracted text:', text);
 
-        const data = await response.json();
-        const content = data.choices[0].message.content;
-        
-        // Extract JSON from the response (sometimes it's wrapped in markdown code blocks)
-        let jsonStr = content;
-        const jsonMatch = content.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
-        if (jsonMatch) {
-            jsonStr = jsonMatch[1];
-        }
-        
-        const eventData = JSON.parse(jsonStr);
+        // Parse the extracted text to find event details
+        const eventData = parseEventDetails(text);
         
         // Populate form with extracted data
         document.getElementById('eventTitle').value = eventData.title || '';
@@ -223,6 +173,188 @@ If any information is not clearly visible, use reasonable defaults or leave empt
         analyzeBtn.disabled = false;
         showToast(`Error: ${error.message}`, 'error');
     }
+}
+
+function parseEventDetails(text) {
+    const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+    
+    let title = '';
+    let date = '';
+    let time = '';
+    let endTime = '';
+    let endDate = '';
+    let location = '';
+    let description = '';
+    
+    // Date patterns
+    const datePatterns = [
+        // MM/DD/YYYY or MM-DD-YYYY
+        /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/,
+        // Month DD, YYYY or Month DD YYYY
+        /(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[\s,]+(\d{1,2})[\s,]+(\d{2,4})/i,
+        // DD Month YYYY
+        /(\d{1,2})[\s,]+(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[\s,]+(\d{2,4})/i,
+        // Weekday, Month DD
+        /(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\s+(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})/i
+    ];
+    
+    // Time patterns
+    const timePatterns = [
+        // HH:MM AM/PM or HH:MMAM/PM
+        /(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)/,
+        // HH AM/PM
+        /(\d{1,2})\s*(AM|PM|am|pm)/,
+        // HH:MM (24-hour)
+        /(\d{1,2}):(\d{2})(?!\d)/
+    ];
+    
+    // Location keywords
+    const locationKeywords = ['room', 'hall', 'building', 'street', 'avenue', 'venue', 'location', 'at', 'address'];
+    
+    // Try to find title (usually the first line or a prominent line)
+    if (lines.length > 0) {
+        // Look for the longest line in first few lines (likely the title)
+        const firstFewLines = lines.slice(0, Math.min(5, lines.length));
+        title = firstFewLines.reduce((longest, current) => 
+            current.length > longest.length ? current : longest
+        );
+    }
+    
+    // Search through all lines for dates and times
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        
+        // Try to match dates
+        if (!date) {
+            for (const pattern of datePatterns) {
+                const match = line.match(pattern);
+                if (match) {
+                    date = convertToISODate(match);
+                    break;
+                }
+            }
+        }
+        
+        // Try to match times
+        const timeMatches = line.match(new RegExp(timePatterns.map(p => p.source).join('|'), 'gi'));
+        if (timeMatches && timeMatches.length > 0) {
+            if (!time) {
+                time = convertTo24Hour(timeMatches[0]);
+            }
+            if (timeMatches.length > 1 && !endTime) {
+                endTime = convertTo24Hour(timeMatches[1]);
+            }
+            // Look for time ranges like "2:00 PM - 4:00 PM"
+            const rangeMatch = line.match(/(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?)\s*[-–—to]+\s*(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?)/i);
+            if (rangeMatch) {
+                time = convertTo24Hour(rangeMatch[1]);
+                endTime = convertTo24Hour(rangeMatch[2]);
+            }
+        }
+        
+        // Try to find location
+        if (!location) {
+            for (const keyword of locationKeywords) {
+                if (line.toLowerCase().includes(keyword)) {
+                    location = line;
+                    break;
+                }
+            }
+        }
+    }
+    
+    // If no title found or title is too short, use first substantial line
+    if (!title || title.length < 5) {
+        title = lines.find(line => line.length > 5 && !line.match(/\d{1,2}:\d{2}/)) || 'Event';
+    }
+    
+    // Create description from remaining text
+    description = lines.slice(0, 5).join(' ');
+    
+    return {
+        title: cleanText(title),
+        date: date,
+        time: time,
+        endDate: endDate || date,
+        endTime: endTime,
+        location: cleanText(location),
+        description: cleanText(description)
+    };
+}
+
+function convertToISODate(match) {
+    const monthMap = {
+        'january': 1, 'jan': 1,
+        'february': 2, 'feb': 2,
+        'march': 3, 'mar': 3,
+        'april': 4, 'apr': 4,
+        'may': 5,
+        'june': 6, 'jun': 6,
+        'july': 7, 'jul': 7,
+        'august': 8, 'aug': 8,
+        'september': 9, 'sep': 9,
+        'october': 10, 'oct': 10,
+        'november': 11, 'nov': 11,
+        'december': 12, 'dec': 12
+    };
+    
+    let year, month, day;
+    
+    if (match[1] && !isNaN(match[1]) && match[1].length <= 2) {
+        // MM/DD/YYYY format
+        month = parseInt(match[1]);
+        day = parseInt(match[2]);
+        year = parseInt(match[3]);
+    } else if (monthMap[match[1]?.toLowerCase()]) {
+        // Month DD, YYYY format
+        month = monthMap[match[1].toLowerCase()];
+        day = parseInt(match[2]);
+        year = match[3] ? parseInt(match[3]) : new Date().getFullYear();
+    } else if (match[2] && monthMap[match[2]?.toLowerCase()]) {
+        // DD Month YYYY format
+        day = parseInt(match[1]);
+        month = monthMap[match[2].toLowerCase()];
+        year = match[3] ? parseInt(match[3]) : new Date().getFullYear();
+    } else if (match[2] && monthMap[match[2]?.toLowerCase()]) {
+        // Weekday, Month DD format
+        month = monthMap[match[2].toLowerCase()];
+        day = parseInt(match[3]);
+        year = new Date().getFullYear();
+    }
+    
+    // Handle 2-digit years
+    if (year < 100) {
+        year += 2000;
+    }
+    
+    // Return ISO format YYYY-MM-DD
+    if (year && month && day) {
+        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+    
+    return '';
+}
+
+function convertTo24Hour(timeStr) {
+    const match = timeStr.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM|am|pm)?/);
+    if (!match) return '';
+    
+    let hours = parseInt(match[1]);
+    const minutes = match[2] ? parseInt(match[2]) : 0;
+    const period = match[3]?.toUpperCase();
+    
+    if (period === 'PM' && hours < 12) {
+        hours += 12;
+    } else if (period === 'AM' && hours === 12) {
+        hours = 0;
+    }
+    
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function cleanText(text) {
+    // Remove excessive whitespace and special characters
+    return text.replace(/\s+/g, ' ').trim();
 }
 
 function handleFormSubmit(event) {
@@ -303,18 +435,6 @@ function generateICS(eventData) {
     showToast('Calendar file downloaded! Open it to add to your calendar.', 'success');
 }
 
-function saveApiKey() {
-    const key = apiKeyInput.value.trim();
-    if (key) {
-        apiKey = key;
-        localStorage.setItem('openai_api_key', key);
-        apiKeySection.classList.add('hidden');
-        showToast('API key saved successfully!', 'success');
-    } else {
-        showToast('Please enter a valid API key', 'error');
-    }
-}
-
 function showToast(message, type = 'success') {
     const toast = document.getElementById('toast');
     toast.textContent = message;
@@ -325,4 +445,3 @@ function showToast(message, type = 'success') {
         toast.classList.add('hidden');
     }, 4000);
 }
-
