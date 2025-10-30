@@ -1,0 +1,24 @@
+{
+  "name": "smartcapture",
+  "version": "1.0.0",
+  "description": "AI-powered web app to extract event information from screenshots and add to calendar",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx http-server -p 8000 -o",
+    "dev": "npx http-server -p 8000 -o"
+  },
+  "keywords": [
+    "calendar",
+    "events",
+    "ai",
+    "screenshot",
+    "ocr",
+    "ics",
+    "event-management"
+  ],
+  "author": "NYU Clubs EEG",
+  "license": "MIT",
+  "devDependencies": {},
+  "dependencies": {}
+}
+
