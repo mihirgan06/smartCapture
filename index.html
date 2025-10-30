@@ -130,27 +130,16 @@
                 </form>
             </div>
 
-            <div class="api-key-section" id="apiKeySection">
-                <div class="api-key-prompt">
-                    <h3>API Key Required</h3>
-                    <p>This app uses OpenAI's Vision API to analyze images. Please enter your API key:</p>
-                    <div class="api-key-input-group">
-                        <input type="password" id="apiKeyInput" placeholder="sk-...">
-                        <button class="btn-primary" id="saveApiKeyBtn">Save</button>
-                    </div>
-                    <p class="api-key-note">Your API key is stored locally and never sent to any server except OpenAI.</p>
-                    <a href="https://platform.openai.com/api-keys" target="_blank" class="api-key-link">Get your API key →</a>
-                </div>
-            </div>
         </main>
 
         <footer>
-            <p>Made with ❤️ for effortless event planning</p>
+            <p>Made with ❤️ for effortless event planning • Powered by Tesseract.js OCR</p>
         </footer>
     </div>
 
     <div class="toast hidden" id="toast"></div>
 
+    <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
     <script src="app.js"></script>
 </body>
 </html>
