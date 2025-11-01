@@ -57,14 +57,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function handleFileSelect(e) {
     const file = e.target.files[0];
-    file?.type.startsWith('image/') ? loadImage(file) : toast('not an image', 'error');
+    file && file.type.startsWith('image/') 
+        ? loadImage(file) 
+        : toast('Please select a valid image file', 'error');
 }
 
 function handleDrop(e) {
     e.preventDefault();
-    e.target.classList.remove('dragover');
+    if (e.target.classList) e.target.classList.remove('dragover');
     const file = e.dataTransfer.files[0];
-    file?.type.startsWith('image/') ? loadImage(file) : toast('not an image', 'error');
+    file && file.type.startsWith('image/')
+        ? loadImage(file)
+        : toast('Please drop a valid image file', 'error');
 }
 
 async function handlePaste() {
@@ -72,11 +76,14 @@ async function handlePaste() {
         const items = await navigator.clipboard.read();
         for (const item of items) {
             const imgType = item.types.find(t => t.startsWith('image/'));
-            if (imgType) return loadImage(await item.getType(imgType));
+            if (imgType) {
+                loadImage(await item.getType(imgType));
+                return;
+            }
         }
-        toast('no image in clipboard', 'error');
+        toast('No image in clipboard', 'error');
     } catch {
-        toast('clipboard blocked - just upload', 'error');
+        toast('Clipboard access failed - try uploading instead', 'error');
     }
 }
 
@@ -124,11 +131,11 @@ function resetAll() {
 }
 
 async function analyzeImage() {
-    if (!currentImage) return toast('no image uploaded', 'error');
+    if (!currentImage) return toast('Upload an image first', 'error');
     if (!apiKey) {
         const apiKeySection = $('apiKeySection');
         if (apiKeySection) apiKeySection.classList.remove('hidden');
-        return toast('need api key', 'error');
+        return toast('Need API key', 'error');
     }
 
     const analyzeBtn = $('analyzeBtn');
@@ -202,13 +209,14 @@ async function analyzeImage() {
             })
         });
 
-        if (!res.ok) throw new Error((await res.json()).error?.message || 'api error');
+        if (!res.ok) throw new Error((await res.json()).error?.message || 'API error');
 
-        let content = (await res.json()).choices[0].message.content;
+        const data = await res.json();
+        let content = data.choices[0].message.content;
         const jsonMatch = content.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
         if (jsonMatch) content = jsonMatch[1];
         
-        const e = JSON.parse(content);
+        const event = JSON.parse(content);
         
         const eventTitle = $('eventTitle');
         const eventDate = $('eventDate');
@@ -221,16 +229,16 @@ async function analyzeImage() {
         const loadingSection = $('loadingSection');
         const resultSection = $('resultSection');
         
-        if (eventTitle) eventTitle.value = e.title || '';
-        if (eventDate) eventDate.value = e.date || '';
-        if (eventTime) eventTime.value = e.time || '';
-        if (eventEndDate) eventEndDate.value = e.endDate || e.date || '';
-        if (eventEndTime) eventEndTime.value = e.endTime || '';
-        if (eventLocation) eventLocation.value = e.location || '';
-        if (eventDescription) eventDescription.value = e.description || '';
+        if (eventTitle) eventTitle.value = event.title || '';
+        if (eventDate) eventDate.value = event.date || '';
+        if (eventTime) eventTime.value = event.time || '';
+        if (eventEndDate) eventEndDate.value = event.endDate || event.date || '';
+        if (eventEndTime) eventEndTime.value = event.endTime || '';
+        if (eventLocation) eventLocation.value = event.location || '';
+        if (eventDescription) eventDescription.value = event.description || '';
         
         // Extract and set host, with fallback to OCR if needed
-        let hostValue = (e.host || '').trim();
+        let hostValue = (event.host || '').trim();
         if (eventHost) {
             if (!hostValue && ocrText) {
                 // Fallback: try OCR extraction using already extracted text
@@ -259,16 +267,11 @@ async function analyzeImage() {
                 }
             }
             eventHost.value = hostValue;
-            if (hostValue) {
-                console.log('Final host value:', hostValue);
-            } else {
-                console.warn('No host extracted from image');
-            }
         }
 
         if (loadingSection) loadingSection.classList.add('hidden');
         if (resultSection) resultSection.classList.remove('hidden');
-        toast('got the details');
+        toast('Extracted event details', 'success');
     } catch (err) {
         console.error(err);
         const loadingSection = $('loadingSection');
@@ -278,7 +281,7 @@ async function analyzeImage() {
         if (loadingSection) loadingSection.classList.add('hidden');
         if (actionSection) actionSection.classList.remove('hidden');
         if (analyzeBtn) analyzeBtn.disabled = false;
-        toast(err.message, 'error');
+        toast(`Error: ${err.message}`, 'error');
     }
 }
 
@@ -294,7 +297,7 @@ function handleFormSubmit(e) {
     const eventDescription = $('eventDescription');
     
     if (!eventTitle || !eventDate || !eventTime) {
-        toast('required fields missing', 'error');
+        toast('Required fields missing', 'error');
         return;
     }
     
@@ -310,38 +313,47 @@ function handleFormSubmit(e) {
     });
 }
 
-function generateICS(ev) {
-    const start = new Date(`${ev.date}T${ev.time}`);
-    const end = ev.endTime ? new Date(`${ev.endDate}T${ev.endTime}`) : new Date(start.getTime() + 3600000);
-    
+function generateICS(event) {
+    const start = new Date(`${event.date}T${event.time}`);
+    const end = event.endTime 
+        ? new Date(`${event.endDate}T${event.endTime}`)
+        : new Date(start.getTime() + 3600000);
+
     const fmt = d => d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
     const esc = s => s.replace(/\\/g, '\\\\').replace(/,/g, '\\,').replace(/;/g, '\\;').replace(/\n/g, '\\n');
-    
+
     const ics = [
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
-        'PRODID:-//SmartCapture//EN',
+        'PRODID:-//SmartCapture//Event Calendar//EN',
+        'CALSCALE:GREGORIAN',
+        'METHOD:PUBLISH',
         'BEGIN:VEVENT',
         `UID:${Date.now()}@smartcapture.app`,
         `DTSTAMP:${fmt(new Date())}`,
         `DTSTART:${fmt(start)}`,
         `DTEND:${fmt(end)}`,
-        `SUMMARY:${esc(ev.title)}`,
-        ev.host && `X-HOST:${esc(ev.host)}`,
-        ev.location && `LOCATION:${esc(ev.location)}`,
-        ev.description && `DESCRIPTION:${esc(ev.description)}`,
+        `SUMMARY:${esc(event.title)}`,
+        event.host && `X-HOST:${esc(event.host)}`,
+        event.location && `LOCATION:${esc(event.location)}`,
+        event.description && `DESCRIPTION:${esc(event.description)}`,
+        'STATUS:CONFIRMED',
+        'SEQUENCE:0',
         'END:VEVENT',
         'END:VCALENDAR'
     ].filter(Boolean).join('\r\n');
-    
-    const blob = new Blob([ics], { type: 'text/calendar' });
+
+    const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${ev.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.ics`;
+    a.href = url;
+    a.download = `${event.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.ics`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(a.href);
-    
-    toast('downloaded');
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    toast('Downloaded! Import it to your calendar', 'success');
 }
 
 // Heuristic OCR fallback to extract host when the model misses it
@@ -359,7 +371,6 @@ async function fallbackExtractHostWithOCR(imageDataUrl) {
 function extractHostFromText(text) {
     if (!text) return '';
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    const joined = text.toLowerCase();
 
     // Enhanced patterns to catch more variations
     const labelPatterns = [
@@ -431,16 +442,16 @@ function sanitizeHost(s) {
 
 function saveApiKey() {
     const apiKeyInput = $('apiKeyInput');
-    if (!apiKeyInput) return toast('api key input not found', 'error');
+    if (!apiKeyInput) return toast('API key input not found', 'error');
     
     const key = apiKeyInput.value.trim();
-    if (!key) return toast('need a key', 'error');
+    if (!key) return toast('Enter a valid API key', 'error');
     
     apiKey = key;
     localStorage.setItem('openai_api_key', key);
     const apiKeySection = $('apiKeySection');
     if (apiKeySection) apiKeySection.classList.add('hidden');
-    toast('saved');
+    toast('API key saved', 'success');
 }
 
 function toast(msg, type = 'success') {
@@ -456,4 +467,3 @@ function toast(msg, type = 'success') {
         if (el) el.classList.add('hidden');
     }, 4000);
 }
-
